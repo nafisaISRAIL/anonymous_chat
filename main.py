@@ -1,11 +1,12 @@
 import asyncio
+import aiofiles
 import gui
 import time
 import argparse
 from datetime import datetime
 
 
-async def read_msgs(host, port, queue):
+async def read_msgs(host, port, message_queue, filepath):
     reader, writer = await asyncio.open_connection(host, port)
     while True:
         line = await reader.readline()
@@ -15,18 +16,38 @@ async def read_msgs(host, port, queue):
         if line:
             date = datetime.now().strftime("%y.%m.%d %H:%M")
             line = f"[{date}] " + line
-            queue.put_nowait(line)
-    writer.close()
+            message_queue.put_nowait(line)
+            async with aiofiles.open(filepath, mode="a") as file:
+                await file.write(line)
 
 
-async def main(host, port, history):
+async def send_msgs(host, port, queue):
+    pass
+
+
+async def saved_messages(filepath, saved_messages_queue):
+    saved_messages_queue.put_nowait("in saved messages")
+    async with aiofiles.open(filepath, mode="r") as file:
+        async for line in file:
+            saved_messages_queue.put_nowait(line)
+
+
+async def main(host, port, filepath):
+    saved_messages_queue = asyncio.Queue()
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
     await asyncio.gather(
-        gui.draw(messages_queue, sending_queue, status_updates_queue),
-        read_msgs(host, port, messages_queue))
+        gui.draw(
+            messages_queue,
+            sending_queue,
+            status_updates_queue,
+            saved_messages_queue),
+        read_msgs(host, port, messages_queue, filepath),
+        saved_messages(filepath, saved_messages_queue)
+    )
     
+
 
 parent_parser = argparse.ArgumentParser(prog="listen-minechat")
 parent_parser.add_argument("--host", type=str, default="minechat.dvmn.org", help="Connection host.")
@@ -34,4 +55,4 @@ parent_parser.add_argument("--port", type=int, default=5000, help="Connection po
 parent_parser.add_argument("--history", type=str, default="history.txt", help="Store file location.")
 
 args = parent_parser.parse_args()
-asyncio.run(main(args.host, args.port, args.history))
+asyncio.run(main(args.host, args.port, "history.txt"))

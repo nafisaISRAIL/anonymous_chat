@@ -100,7 +100,7 @@ def create_status_panel(root_frame):
     return (nickname_label, status_read_label, status_write_label)
 
 
-async def draw(messages_queue, sending_queue, status_updates_queue):
+async def draw(messages_queue, sending_queue, status_updates_queue, saved_messages_queue):
     root = tk.Tk()
 
     root.title('Чат Майнкрафтера')
@@ -128,6 +128,7 @@ async def draw(messages_queue, sending_queue, status_updates_queue):
 
     await asyncio.gather(
         update_tk(root_frame),
+        update_conversation_history(conversation_panel, saved_messages_queue),
         update_conversation_history(conversation_panel, messages_queue),
         update_status_panel(status_labels, status_updates_queue)
     )
