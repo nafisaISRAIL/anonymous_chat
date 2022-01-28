@@ -6,8 +6,21 @@ import argparse
 from datetime import datetime
 
 
-async def read_msgs(host, port, message_queue, filepath):
-    reader, writer = await asyncio.open_connection(host, port)
+import argparse
+from datetime import datetime
+import logging
+
+import gui
+
+from server_connection import authorise, connect, submit_message, check_connection
+
+
+logging.basicConfig(level=logging.DEBUG)
+
+async def read_msgs(host, port, message_queue, filepath, status_update_queue):
+    status_update_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
+    reader, _ = await asyncio.open_connection(host, port)
+    status_update_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
     while True:
         line = await reader.readline()
         if not line:
@@ -19,10 +32,7 @@ async def read_msgs(host, port, message_queue, filepath):
             message_queue.put_nowait(line)
             async with aiofiles.open(filepath, mode="a") as file:
                 await file.write(line)
-
-
-async def send_msgs(host, port, queue):
-    pass
+    status_update_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
 
 
 async def saved_messages(filepath, saved_messages_queue):
@@ -32,27 +42,43 @@ async def saved_messages(filepath, saved_messages_queue):
             saved_messages_queue.put_nowait(line)
 
 
-async def main(host, port, filepath):
+async def send_msgs(host, port, queue, token):
+    while True:
+        message = await queue.get()
+        await submit_message(host, port, message, token)
+
+
+async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
     saved_messages_queue = asyncio.Queue()
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
+
+    user_info = await authorise(nickname, host, sender_port, status_updates_queue)
+    token = user_info["account_hash"]
+
+    # check connection of sending host
+    await check_connection(host, sender_port, reader_port, status_updates_queue)
+
     await asyncio.gather(
         gui.draw(
             messages_queue,
             sending_queue,
             status_updates_queue,
             saved_messages_queue),
-        read_msgs(host, port, messages_queue, filepath),
-        saved_messages(filepath, saved_messages_queue)
+
+        saved_messages(filepath, saved_messages_queue),
+        read_msgs(host, reader_port, messages_queue, filepath, status_updates_queue),
+        saved_messages(filepath, saved_messages_queue),
+        send_msgs(host, sender_port, sending_queue, token)
     )
+
     
-
-
 parent_parser = argparse.ArgumentParser(prog="listen-minechat")
 parent_parser.add_argument("--host", type=str, default="minechat.dvmn.org", help="Connection host.")
-parent_parser.add_argument("--port", type=int, default=5000, help="Connection port.")
+parent_parser.add_argument("--sender_port", type=int, default=5000, help="Connection port - reader.")
+parent_parser.add_argument("--reader_port", type=int, default=5050, help="Connection port - sender.")
 parent_parser.add_argument("--history", type=str, default="history.txt", help="Store file location.")
 
 args = parent_parser.parse_args()
-asyncio.run(main(args.host, args.port, "history.txt"))
+asyncio.run(main(args.host, args.sender_port, args.reader_port,"history.txt"))
