@@ -1,23 +1,20 @@
+import argparse
 import asyncio
-import aiofiles
-import gui
-import time
-import argparse
-from datetime import datetime
-
-
-import argparse
-from datetime import datetime
+from async_timeout import timeout
 import logging
+from datetime import datetime
+
+import aiofiles
 
 import gui
-
-from server_connection import authorise, connect, submit_message, check_connection
-
+from server_connection import (authorise, check_connection_sender_service, connect,
+                               submit_message, get_timestamp)
 
 logging.basicConfig(level=logging.DEBUG)
 
+
 async def read_msgs(host, port, message_queue, filepath, status_update_queue):
+    stamp = await get_timestamp()
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
     reader, _ = await asyncio.open_connection(host, port)
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
@@ -25,6 +22,7 @@ async def read_msgs(host, port, message_queue, filepath, status_update_queue):
         line = await reader.readline()
         if not line:
             break
+        logging.info(f"[{stamp}] Connection is alive. New message in chat")
         line = line.decode("utf-8")
         if line:
             date = datetime.now().strftime("%y.%m.%d %H:%M")
@@ -32,6 +30,7 @@ async def read_msgs(host, port, message_queue, filepath, status_update_queue):
             message_queue.put_nowait(line)
             async with aiofiles.open(filepath, mode="a") as file:
                 await file.write(line)
+
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
 
 
@@ -58,7 +57,7 @@ async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
     token = user_info["account_hash"]
 
     # check connection of sending host
-    await check_connection(host, sender_port, reader_port, status_updates_queue)
+    await check_connection_sender_service(host, sender_port, reader_port, status_updates_queue)
 
     await asyncio.gather(
         gui.draw(
@@ -73,7 +72,7 @@ async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
         send_msgs(host, sender_port, sending_queue, token)
     )
 
-    
+
 parent_parser = argparse.ArgumentParser(prog="listen-minechat")
 parent_parser.add_argument("--host", type=str, default="minechat.dvmn.org", help="Connection host.")
 parent_parser.add_argument("--sender_port", type=int, default=5000, help="Connection port - reader.")

@@ -1,6 +1,9 @@
+from datetime import datetime
+from sqlite3 import Timestamp
 import aiofiles
 import argparse
 import asyncio
+from datetime import datetime
 import json
 import logging
 
@@ -9,21 +12,14 @@ import gui
 logging.basicConfig(level=logging.DEBUG)
 
 
-async def submit_message(host, port, message, token):
-    reader, writer = await connect(host, port, token)
-
-    for _ in range(2):
-        # pass returned authorized user data
-        # pass rule of message sending
-        await reader.readline()
-
-    await send_data(writer, message)
-
-    writer.close()
-    logging.info("Message was sent")
+async def get_timestamp():
+    now = datetime.now()
+    return datetime.timestamp(now)
 
 
 async def authorise(nickname, host, sender_port, status_updates_queue):
+    timestamp = await get_timestamp()
+    logging.info(f"[{timestamp}] Connection is alive. Prompt before auth")
     user_info = None
     async with aiofiles.open("token.txt", mode="r+") as token_file:
         user_info = await token_file.read()
@@ -35,6 +31,7 @@ async def authorise(nickname, host, sender_port, status_updates_queue):
     try:
         user_info = json.loads(user_info)
         status_updates_queue.put_nowait(gui.NicknameReceived(user_info["nickname"]))
+        logging.info(f"[{timestamp}] Connection is alive. Authorization done")
         return user_info
     except asyncio.CancelledError:
         logging.error("Error occurred while token was retrieving.")
@@ -60,6 +57,20 @@ async def register(host, port, nickname):
     return user_data
 
 
+async def submit_message(host, port, message, token):
+    reader, writer = await connect(host, port, token)
+    for _ in range(2):
+        # pass returned authorized user data
+        # pass rule of message sending
+        await reader.readline()
+
+    await send_data(writer, message)
+
+    writer.close()
+    timestamp = await get_timestamp()
+    logging.info(f"[{timestamp}] Connection is alive. Message was sent")
+
+
 async def connect(host, port, token):
     reader, writer = await asyncio.open_connection(host, port)
     greetings = await reader.readline()
@@ -76,7 +87,7 @@ async def send_data(writer, data):
     writer.write(f"{data}\n\n".encode())
     await writer.drain()
 
-async def check_connection(host, port, token, status_update_queue):
+async def check_connection_sender_service(host, port, token, status_update_queue):
     status_update_queue.put_nowait(gui.SendingConnectionStateChanged.INITIATED)
     reader, writer = await asyncio.open_connection(host, port)
     greetings = await reader.readline()
