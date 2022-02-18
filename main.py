@@ -8,13 +8,13 @@ import aiofiles
 
 import gui
 from server_connection import (authorise, check_connection_sender_service, connect,
-                               submit_message, get_timestamp)
+                               submit_message, watch_for_connection)
 
 logging.basicConfig(level=logging.DEBUG)
 
 
-async def read_msgs(host, port, message_queue, filepath, status_update_queue):
-    stamp = await get_timestamp()
+async def read_msgs(host, port, message_queue, filepath, status_update_queue, watch_queue):
+
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
     reader, _ = await asyncio.open_connection(host, port)
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
@@ -22,7 +22,7 @@ async def read_msgs(host, port, message_queue, filepath, status_update_queue):
         line = await reader.readline()
         if not line:
             break
-        logging.info(f"[{stamp}] Connection is alive. New message in chat")
+        watch_queue.put_nowait("New message in chat")
         line = line.decode("utf-8")
         if line:
             date = datetime.now().strftime("%y.%m.%d %H:%M")
@@ -41,10 +41,11 @@ async def saved_messages(filepath, saved_messages_queue):
             saved_messages_queue.put_nowait(line)
 
 
-async def send_msgs(host, port, queue, token):
+async def send_msgs(host, port, queue, token, watch_queue):
     while True:
         message = await queue.get()
         await submit_message(host, port, message, token)
+        watch_queue.put_nowait("Message sent")
 
 
 async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
@@ -52,12 +53,13 @@ async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
+    watchdog_queue = asyncio.Queue()
 
-    user_info = await authorise(nickname, host, sender_port, status_updates_queue)
+    user_info = await authorise(nickname, host, sender_port, status_updates_queue, watchdog_queue)
     token = user_info["account_hash"]
 
     # check connection of sending host
-    await check_connection_sender_service(host, sender_port, reader_port, status_updates_queue)
+    await check_connection_sender_service(host, sender_port, reader_port, status_updates_queue, watchdog_queue)
 
     await asyncio.gather(
         gui.draw(
@@ -67,9 +69,10 @@ async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
             saved_messages_queue),
 
         saved_messages(filepath, saved_messages_queue),
-        read_msgs(host, reader_port, messages_queue, filepath, status_updates_queue),
+        read_msgs(host, reader_port, messages_queue, filepath, status_updates_queue, watchdog_queue),
         saved_messages(filepath, saved_messages_queue),
-        send_msgs(host, sender_port, sending_queue, token)
+        send_msgs(host, sender_port, sending_queue, token, watchdog_queue),
+        watch_for_connection(watchdog_queue)
     )
 
 
