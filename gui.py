@@ -102,7 +102,6 @@ def create_status_panel(root_frame):
 
 async def draw(messages_queue, sending_queue, status_updates_queue, saved_messages_queue):
     root = tk.Tk()
-
     root.title('Чат Майнкрафтера')
 
     root_frame = tk.Frame()
@@ -117,6 +116,7 @@ async def draw(messages_queue, sending_queue, status_updates_queue, saved_messag
     input_field.pack(side="left", fill=tk.X, expand=True)
 
     input_field.bind("<Return>", lambda event: process_new_message(input_field, sending_queue))
+    root.bind('<Control-c>', lambda event: root.destroy())
 
     send_button = tk.Button(input_frame)
     send_button["text"] = "Отправить"

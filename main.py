@@ -1,28 +1,36 @@
 import argparse
 import asyncio
-from async_timeout import timeout
 import logging
+import os
 from datetime import datetime
 
 import aiofiles
+import anyio
+from anyio import create_task_group
+from async_timeout import timeout
 
 import gui
-from server_connection import (authorise, check_connection_sender_service, connect,
-                               submit_message, watch_for_connection)
+from auth_gui import registration
+from server_connection import (check_connection_sender_service, get_user_info,
+                               handle_connection, ping_pong, submit_message,
+                               watch_for_connection)
 
 logging.basicConfig(level=logging.DEBUG)
 
+HOST = os.getenv("HOST", "minechat.dvmn.org")
+SENDER_PORT = os.getenv("SENDER_PORT", 5050)
+READER_PORT = os.getenv("READER_PORT", 5000)
 
-async def read_msgs(host, port, message_queue, filepath, status_update_queue, watch_queue):
 
+async def read_msgs(host, port, message_queue, filepath, status_update_queue, watchdog_queue):
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.INITIATED)
-    reader, _ = await asyncio.open_connection(host, port)
+    reader, _ = await handle_connection(host, port, watchdog_queue)
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
     while True:
         line = await reader.readline()
         if not line:
             break
-        watch_queue.put_nowait("New message in chat")
+        watchdog_queue.put_nowait("New message in chat")
         line = line.decode("utf-8")
         if line:
             date = datetime.now().strftime("%y.%m.%d %H:%M")
@@ -34,53 +42,53 @@ async def read_msgs(host, port, message_queue, filepath, status_update_queue, wa
     status_update_queue.put_nowait(gui.ReadConnectionStateChanged.CLOSED)
 
 
-async def saved_messages(filepath, saved_messages_queue):
-    saved_messages_queue.put_nowait("in saved messages")
+async def display_saved_messages(filepath, saved_messages_queue):
     async with aiofiles.open(filepath, mode="r") as file:
         async for line in file:
             saved_messages_queue.put_nowait(line)
 
 
-async def send_msgs(host, port, queue, token, watch_queue):
+async def send_msgs(host, port, queue, token, watchdog_queue):
     while True:
         message = await queue.get()
-        await submit_message(host, port, message, token)
-        watch_queue.put_nowait("Message sent")
+        await submit_message(host, port, message, token, watchdog_queue)
+        watchdog_queue.put_nowait("Message sent")
 
 
-async def main(host, reader_port, sender_port, filepath, nickname="Devman"):
+async def main():
+    filepath = "history.txt"
     saved_messages_queue = asyncio.Queue()
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
     watchdog_queue = asyncio.Queue()
 
-    user_info = await authorise(nickname, host, sender_port, status_updates_queue, watchdog_queue)
+    user_info = await get_user_info()
     token = user_info["account_hash"]
+    nickname = user_info["nickname"]
+    status_updates_queue.put_nowait(gui.NicknameReceived(nickname))
 
     # check connection of sending host
-    await check_connection_sender_service(host, sender_port, reader_port, status_updates_queue, watchdog_queue)
+    await check_connection_sender_service(HOST, SENDER_PORT, token, status_updates_queue, watchdog_queue)
 
-    await asyncio.gather(
-        gui.draw(
-            messages_queue,
-            sending_queue,
-            status_updates_queue,
-            saved_messages_queue),
+    try:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(gui.draw,
+                *[messages_queue,
+                sending_queue,
+                status_updates_queue,
+                saved_messages_queue])
 
-        saved_messages(filepath, saved_messages_queue),
-        read_msgs(host, reader_port, messages_queue, filepath, status_updates_queue, watchdog_queue),
-        saved_messages(filepath, saved_messages_queue),
-        send_msgs(host, sender_port, sending_queue, token, watchdog_queue),
-        watch_for_connection(watchdog_queue)
-    )
+            tg.start_soon(read_msgs, *[HOST, READER_PORT, messages_queue, filepath, status_updates_queue, watchdog_queue])
+            tg.start_soon(display_saved_messages, *[filepath, saved_messages_queue])
+            tg.start_soon(send_msgs, *[HOST, SENDER_PORT, sending_queue, token, watchdog_queue])
+            tg.start_soon(watch_for_connection, watchdog_queue),
+            tg.start_soon(ping_pong, *[HOST, SENDER_PORT, token, watchdog_queue])
+
+    except gui.TkAppClosed:
+        logging.info("The program was closed!")
 
 
-parent_parser = argparse.ArgumentParser(prog="listen-minechat")
-parent_parser.add_argument("--host", type=str, default="minechat.dvmn.org", help="Connection host.")
-parent_parser.add_argument("--sender_port", type=int, default=5000, help="Connection port - reader.")
-parent_parser.add_argument("--reader_port", type=int, default=5050, help="Connection port - sender.")
-parent_parser.add_argument("--history", type=str, default="history.txt", help="Store file location.")
-
-args = parent_parser.parse_args()
-asyncio.run(main(args.host, args.sender_port, args.reader_port,"history.txt"))
+if __name__ == "__main__":
+    registration(HOST, SENDER_PORT)
+    asyncio.run(main())
