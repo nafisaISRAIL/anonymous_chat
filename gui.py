@@ -1,5 +1,7 @@
 import tkinter as tk
 import asyncio
+from anyio import create_task_group
+
 from tkinter.scrolledtext import ScrolledText
 from enum import Enum
 
@@ -132,3 +134,9 @@ async def draw(messages_queue, sending_queue, status_updates_queue, saved_messag
         update_conversation_history(conversation_panel, messages_queue),
         update_status_panel(status_labels, status_updates_queue)
     )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(update_tk,root_frame)
+        tg.start_soon(update_conversation_history, *[conversation_panel, saved_messages_queue])
+        tg.start_soon(update_conversation_history, *[conversation_panel, messages_queue])
+        tg.start_soon(update_status_panel, *[status_labels, status_updates_queue])
