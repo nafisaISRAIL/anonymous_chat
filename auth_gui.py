@@ -1,42 +1,35 @@
-import os
-import asyncio
-from tkinter import *
+import tkinter as tk
 
-from server_connection import register
-import logging
+from server_connection import get_user_info_from_server
 
 
-loop = asyncio.get_event_loop()
-
-def get_token(input_field, root, main_label, host, port):
+def process_nickname(input_field, root, main_label, some_queue):
     nickname = input_field.get()
-    try:
-        loop.run_until_complete(register(host, port, nickname))
-        main_label.config(text="The token was retreived.")
-    finally:
-        root.after(1000, lambda : root.destroy())
+    some_queue.put_nowait(nickname)
+    main_label.config(text="The token has been received.")
+    root.after(1000, lambda : root.destroy())
 
 
-def registration(host, port):
-    root = Tk()
-    root.title("Chat authorization")
+async def register_new_user(some_queue):
+    root = tk.Tk()
+    root.title("Chat authorisation")
 
-    root_frame = Frame()
+    root_frame = tk.Frame()
     root_frame.pack(fill="both", expand=True)
 
-    main_label = Label(root_frame, text="Please enter your nickname", font="16", pady = 20)
+    main_label = tk.Label(root_frame, text="Please enter a nickname", font="16", pady = 20)
     main_label.pack()
 
-    input_frame = Frame(root_frame)
-    input_frame.pack(side="bottom", fill=X)
+    input_frame = tk.Frame(root_frame)
+    input_frame.pack(side="bottom", fill=tk.X)
 
-    input_field = Entry(input_frame)
-    input_field.pack(side="left", fill=X, expand=True)
+    input_field = tk.Entry(input_frame)
+    input_field.pack(side="left", fill=tk.X, expand=True)
 
 
-    send_button = Button(input_frame)
-    send_button["text"] = "Authorize"
-    send_button["command"] = lambda: get_token(input_field, root, main_label, host, port)
+    send_button = tk.Button(input_frame)
+    send_button["text"] = "Authorise"
+    send_button["command"] = lambda: process_nickname(input_field, root, main_label, some_queue)
     send_button.pack(side="left")
 
     input_frame.pack(padx=10,pady=10)

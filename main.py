@@ -7,13 +7,16 @@ from datetime import datetime
 import aiofiles
 import anyio
 from anyio import create_task_group
-from async_timeout import timeout
+
 
 import gui
-from auth_gui import registration
-from server_connection import (check_connection_sender_service, get_user_info,
+from auth_gui import register_new_user
+from server_connection import (check_connection_sender_service,
                                handle_connection, ping_pong, submit_message,
-                               watch_for_connection)
+                               watch_for_connection,
+                               get_user_info_from_file, get_user_info_from_server)
+
+logger = logging.getLogger("secret_chat")
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -56,14 +59,22 @@ async def send_msgs(host, port, queue, token, watchdog_queue):
 
 
 async def main():
-    filepath = "history.txt"
+    user_info = await get_user_info_from_file()
+    if not user_info:
+        get_token_queue = asyncio.Queue()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(register_new_user,*[get_token_queue])
+            tg.start_soon(get_user_info_from_server, *[HOST, SENDER_PORT, get_token_queue])
+
+    saved_messages_filepath = "history.txt"
     saved_messages_queue = asyncio.Queue()
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
     watchdog_queue = asyncio.Queue()
 
-    user_info = await get_user_info()
+    user_info = await get_user_info_from_file()
+
     token = user_info["account_hash"]
     nickname = user_info["nickname"]
     status_updates_queue.put_nowait(gui.NicknameReceived(nickname))
@@ -79,8 +90,8 @@ async def main():
                 status_updates_queue,
                 saved_messages_queue])
 
-            tg.start_soon(read_msgs, *[HOST, READER_PORT, messages_queue, filepath, status_updates_queue, watchdog_queue])
-            tg.start_soon(display_saved_messages, *[filepath, saved_messages_queue])
+            tg.start_soon(read_msgs, *[HOST, READER_PORT, messages_queue, saved_messages_filepath, status_updates_queue, watchdog_queue])
+            tg.start_soon(display_saved_messages, *[saved_messages_filepath, saved_messages_queue])
             tg.start_soon(send_msgs, *[HOST, SENDER_PORT, sending_queue, token, watchdog_queue])
             tg.start_soon(watch_for_connection, watchdog_queue),
             tg.start_soon(ping_pong, *[HOST, SENDER_PORT, token, watchdog_queue])
@@ -90,5 +101,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    registration(HOST, SENDER_PORT)
+    logging.basicConfig(level=logging.ERROR)
+    logger.setLevel(logging.DEBUG)
     asyncio.run(main())

@@ -1,6 +1,6 @@
 import tkinter as tk
 import asyncio
-from anyio import create_task_group
+import anyio
 
 from tkinter.scrolledtext import ScrolledText
 from enum import Enum
